@@ -1,0 +1,3 @@
+WARNING Wed Oct 14 12:36:17 2026: Attach conflict when attaching 'iiwa14', policy is 'warning'
+integrator: parent has 0 (default), child has 3, keeping parent value
+

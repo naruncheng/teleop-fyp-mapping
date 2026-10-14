@@ -1,0 +1,85 @@
+<!--
+Generic 4-axis SCARA, sized after the ABB IRB 910SC-3/0.55 using the numbers
+in its product specification (3HAC056431-001 rev E):
+
+  lower arm (axis 1 -> axis 2)   300 mm
+  upper arm (axis 2 -> quill)    250 mm      (550 mm reach)
+  axis 1                         +/-140 deg
+  axis 2                         +/-150 deg
+  axis 3 (quill, Z stroke)       180 mm, 0 = top, travels down
+  axis 4 (tool rotation)         +/-400 deg
+
+Heights, masses and shapes are NOT from ABB: simple primitives of plausible
+size. Kinematics are what matter here.
+
+Naming matches the iiwa model so the same follower code drives both: body
+"base", site "attachment_site", actuators "actuator1..4", keyframe "home".
+The tool site's +Z points DOWN, out of the flange, the same "+Z out of the
+flange" convention as the iiwa's attachment_site.
+-->
+<mujoco model="scara">
+  <compiler angle="radian" autolimits="true"/>
+
+  <option integrator="implicitfast"/>
+
+  <default>
+    <default class="scara">
+      <joint armature="0.05" damping="2"/>
+      <!-- Visual only: nothing here collides with the other arms in the scene. -->
+      <geom contype="0" conaffinity="0" rgba="0.92 0.92 0.92 1"/>
+      <position dampratio="1"/>
+      <default class="accent">
+        <geom rgba="0.85 0.15 0.15 1"/>
+      </default>
+      <default class="dark">
+        <geom rgba="0.25 0.25 0.28 1"/>
+      </default>
+    </default>
+  </default>
+
+  <worldbody>
+    <body name="base" childclass="scara">
+      <!-- 160 x 160 mm footprint (from the spec), column up to the axis-1 joint -->
+      <geom name="column" type="box" size="0.08 0.08 0.15" pos="0 0 0.15" mass="10"/>
+
+      <body name="link1" pos="0 0 0.30">
+        <joint name="joint1" axis="0 0 1" range="-2.44346 2.44346"/>
+        <geom type="cylinder" size="0.075 0.03" pos="0 0 0.03" class="dark" mass="1.5"/>
+        <geom type="box" size="0.15 0.055 0.03" pos="0.15 0 0.03" mass="4"/>
+
+        <body name="link2" pos="0.30 0 0.06">
+          <joint name="joint2" axis="0 0 1" range="-2.61799 2.61799"/>
+          <geom type="cylinder" size="0.06 0.025" pos="0 0 0.025" class="dark" mass="1"/>
+          <geom type="box" size="0.125 0.045 0.025" pos="0.125 0 0.025" mass="2.5"/>
+          <!-- quill housing at the end of the upper arm -->
+          <geom type="cylinder" size="0.04 0.05" pos="0.25 0 0.05" class="accent" mass="0.8"/>
+
+          <body name="quill" pos="0.25 0 0">
+            <joint name="joint3" type="slide" axis="0 0 1" range="-0.18 0"/>
+            <geom type="cylinder" fromto="0 0 0.12  0 0 -0.13" size="0.012" class="dark" mass="0.6"/>
+
+            <body name="wrist" pos="0 0 -0.13">
+              <joint name="joint4" axis="0 0 1" range="-6.98132 6.98132"/>
+              <geom type="cylinder" size="0.025 0.005" pos="0 0 -0.005" class="accent" mass="0.2"/>
+              <!-- tool frame: rotated 180 deg about X so +Z points down, out of the flange -->
+              <site name="attachment_site" pos="0 0 -0.01" quat="0 1 0 0" size="0.001" group="4"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <actuator>
+    <position name="actuator1" joint="joint1" class="scara" kp="2000" ctrlrange="-2.44346 2.44346"/>
+    <position name="actuator2" joint="joint2" class="scara" kp="1000" ctrlrange="-2.61799 2.61799"/>
+    <position name="actuator3" joint="joint3" class="scara" kp="5000" ctrlrange="-0.18 0"/>
+    <position name="actuator4" joint="joint4" class="scara" kp="50" ctrlrange="-6.98132 6.98132"/>
+  </actuator>
+
+  <keyframe>
+    <!-- elbow bent, so the arm isn't sitting at the straight-out singularity;
+         quill at mid-stroke, so there's travel both up and down -->
+    <key name="home" qpos="0 1.2 -0.09 0" ctrl="0 1.2 -0.09 0"/>
+  </keyframe>
+</mujoco>
