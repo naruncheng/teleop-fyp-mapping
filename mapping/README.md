@@ -2,7 +2,8 @@
 
 Simulated follower robots (MuJoCo) that track a leader arm's end-effector pose: a 7-DOF
 KUKA iiwa 14 (7→7), a 6-DOF UR5e (7→6), the Nova rover's Taipan arm (7→6, four-bar elbow),
-a 4-DOF SCARA (7→4), or any combination at once.
+a 4-DOF SCARA (7→4), or any combination at once. (The SCARA is a generic model, not a real
+robot, and is due to be archived.)
 
 ```
 leader joint readings -> simulated leader (1:1) -> FK (MuJoCo, leader model) -> pose rel. leader base
@@ -25,11 +26,9 @@ pip install -r requirements.txt
 
 ```bash
 python run_sim.py --joints-demo          # leader sways from code, KUKA follows
-python run_sim.py --joints-demo --followers kuka scara   # both followers at once
-python run_sim.py --joints-demo --followers scara        # SCARA alone
-python run_sim.py --joints-demo --followers kuka ur5e scara   # all three
-python run_sim.py --joints-demo --followers kuka ur5e taipan  # with the Taipan
-python run_sim.py --joints-opcua opc.tcp://<pi>:4840   # real mini-arm via miniarm_v2.py
+python run_sim.py --joints-demo --followers kuka ur5e taipan  # several followers at once
+python run_sim.py --joints-demo --followers taipan       # one follower alone
+python run_sim.py --joints-opcua opc.tcp://<pi>:4840 --followers kuka ur5e taipan   # real mini-arm via miniarm_v2.py
 python run_sim.py --joints-udp 9500      # leader follows joint readings over UDP
 python send_test_joints.py               # stand-in physical leader for --joints-udp
 ```
@@ -43,8 +42,17 @@ python run_sim.py --udp 9400             # follow poses over UDP
 python send_test_pose.py                 # stand-in leader for --udp
 ```
 
-Each follower has its own target arrow (KUKA yellow, UR5e orange, Taipan pink, SCARA cyan); its tool chases it. Once
-a second the console logs each follower's IK solve error and actual tool-to-target gap.
+Each follower has its own target arrow (KUKA yellow, UR5e orange, Taipan pink, SCARA cyan); its
+tool chases it. Once a second the console logs each follower's IK solve error and actual
+tool-to-target gap.
+
+The viewer opens with shadows, reflections and haze off (turn them back on in its Rendering
+panel). Physics runs at 500 Hz and IK at 50 Hz, stepped to keep up with the wall clock, and the
+window redraws at 60 Hz. If the computer can't keep up for a whole second, the console warns
+"simulation running slower than real time": use fewer followers. All three of KUKA + UR5e +
+Taipan only just fit (about 1.1× real time headless on a laptop), because each IK solve runs over
+every joint in the scene. The `--joints-demo` and `--demo` motions run on simulation time, so if
+the sim slows they slow with it; a real leader doesn't, so its followers fall behind.
 
 | Option | Default | Meaning |
 |---|---|---|
@@ -160,12 +168,27 @@ With the normal demo motion it tracks 100% of solves within 10 mm / 5°.
 
 ## The Taipan follower (7→6, four-bar elbow)
 
-`models/taipan/`: the Nova rover's Taipan arm, generated from its Onshape URDF
-(`nova/taipan_mujoco.urdf`, a sparse checkout of MonashNovaRover/nova beside this repo) by
+`models/taipan/`: the Nova rover's Taipan arm, generated from its Onshape URDF. The generated
+`taipan.xml` and `assets/` are committed, so running the sim needs nothing else. To regenerate
+(after re-exporting the arm), the build reads `nova/taipan_mujoco.urdf` and the meshes from a
+sparse checkout of MonashNovaRover/nova beside this folder (`nova/` is gitignored):
 
 ```bash
-python models/taipan/build_taipan.py        # rerun after re-exporting the arm
+# from the repo root, NOT from inside mapping/ (that would make this repo sparse instead)
+git clone --filter=blob:none --no-checkout https://github.com/MonashNovaRover/nova/
+cd nova
+git config core.protectNTFS false   # Windows: the repo has files with ':' in the name, outside this folder
+git sparse-checkout set src/ros/rover/rover_description/taipan/meshes
+git checkout main
+# put taipan_mujoco.urdf in nova/, then:
+cd ../mapping
+python models/taipan/build_taipan.py
 ```
+
+`taipan_mujoco.urdf` is Nova's `taipan/urdf/arm.urdf` with three edits: mesh paths made relative
+(`file://$(arg rover_description_dir)/` stripped), the xacro namespace dropped so the root tag is
+exactly `<robot name="Arm">` (the build looks for that), and the two tensioner brackets
+(`tensioner_v2___bracket`, `..._mirrored`) removed.
 
 It isn't a plain serial arm: both shoulder motors sit on one axis. `j2` drives the upper arm and
 `j3` drives a 0.1 m crank, and a parallelogram (crank → 0.5 m rod → 0.1 m lever on the forearm)
@@ -184,8 +207,9 @@ Other changes made by the build:
 
 - Root body `base`, turned +90° so the arm faces +x like the others (the URDF faces −y).
   Stands on its base box, 0.163 m below `base`.
-- `attachment_site` on the `j6` axis at the flange, +Z out toward the gripper. (Nova's own
-  end-effector frame is 0.2225 m further out, at the fingers.)
+- `attachment_site` on the `j6` axis at the flange, +Z out toward the gripper, the same point
+  the KUKA, UR5e and leader use. (Nova's own end-effector frame is 0.2225 m further out, at the
+  fingers.)
 - Collision boxes in geom group 3, hidden by default: they're solid stand-ins that otherwise
   cover the detailed meshes.
 - Meshes over 20k faces simplified (0.5 mm vertex merge): 57 → 25 MB, and MuJoCo can't load the
@@ -212,10 +236,11 @@ reach inside its 0.85 m. 1.6×, 1.8× and 2.0× all measured the same on the dem
 ## Adding another follower
 
 Add a model under `models/` that names its base body `base`, its tool site `attachment_site`
-(+Z out of the flange), and a keyframe `home`, with one position actuator per joint (any
-names). Menagerie arms mostly follow this already, as the UR5e did. Then add a `FollowerSpec` to `scene.FOLLOWERS`. Use `orientation="yaw"` plus
-`yaw_joint` for any robot whose tool can only turn about vertical, and `four_bar` for a
-parallelogram-driven elbow like the Taipan's.
+(+Z out of the flange), and a keyframe `home` covering every joint (passive ones too: the
+follower starts from it), with one position actuator per motor (any names). Menagerie arms
+mostly follow this already, as the UR5e did. Then add a `FollowerSpec` to `scene.FOLLOWERS`. Use
+`orientation="yaw"` plus `yaw_joint` for any robot whose tool can only turn about vertical, and
+`four_bar` for a parallelogram-driven elbow like the Taipan's.
 
 ## Plugging in a pose-only leader
 
@@ -245,22 +270,23 @@ or `"quaternion": [w, x, y, z]` in place of `"rotation"`.
 | `opcua_source.py` | `OpcUaJointSource`: reads miniarm_v2.py's OPC UA joint nodes |
 | `pose_sources.py` | `PoseSource` interface, `DemoPose`, `UdpPoseSource`, shared UDP listener |
 | `scene.py` | Builds the model: world + chosen followers + leader; `FOLLOWERS` registry |
-| `run_sim.py` | MuJoCo viewer entry point |
+| `run_sim.py` | MuJoCo viewer entry point: real-time loop, IK every 10th step, 60 Hz redraw |
 | `send_test_joints.py` / `send_test_pose.py` | Stand-in leaders over UDP |
 | `world.xml` | Empty world: floor, lights, target-marker arrowhead |
 | `models/kuka_iiwa_14/` | MuJoCo Menagerie iiwa 14 (see its LICENSE) |
 | `models/taipan/` | Nova Taipan arm: `build_taipan.py` makes `taipan.xml` + `assets/` from the URDF |
-| `models/scara/` | Generic SCARA (IRB 910SC-3/0.55 dimensions) |
+| `models/scara/` | Generic SCARA (IRB 910SC-3/0.55 dimensions), to be archived |
 | `models/universal_robots_ur5e/` | MuJoCo Menagerie UR5e, unchanged (see its LICENSE) |
 | `models/leader_arm/` | Leader arm URDF, MJCF and meshes (copied from `../sim/Main Assembly_3`) |
 
-## Measured behaviour (headless, 60 s of `--joints-demo`, all three followers)
+## Measured behaviour (headless, 60 s of `--joints-demo`)
 
-- KUKA (2×): 100% of IK solves within 10 mm / 5°. Tool gap about 9 mm mean and 20 mm max
+- KUKA (2×): 100% of IK solves within 10 mm / 5°. Tool gap about 10 mm mean and 21 mm max
   while moving (servo lag), about 0.02 mm once the target stops.
 - SCARA: 100% within 10 mm / 5°, tool gap about 2 mm mean and 6 mm max.
 - Taipan (2.8×): 100% within 10 mm / 5°, tool gap about 14 mm mean and 29 mm max, tool never
-  below 0.15 m, no contacts. The four-bar holds elbow = `j2 − j3` to within 0.004 rad.
+  below 0.15 m, no contacts. The four-bar holds elbow = `j2 − j3` to within 0.004 rad. Live in
+  the viewer with KUKA + UR5e alongside, gaps were 7–23 mm across all three.
 - UR5e (2×): 100% within 10 mm / 5° after the first 0.34 s, tool gap about 18 mm mean and
   39 mm max. Its home pose is about 0.5 m from where the leader maps, so it swings there at
   startup. Its wrist servos are softer than the KUKA's, hence the larger lag.
