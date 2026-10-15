@@ -39,6 +39,11 @@ class FollowerSpec:
     # the tool point (a SCARA's axis 4). Yaw is set on it directly rather
     # than searched for by IK, so it can never wind up against its limit.
     yaw_joint: str = None
+    # For a parallelogram four-bar driving the elbow from the shoulder (the
+    # Taipan): (shoulder, elbow, crank, rod) joint names. IK solves the
+    # shoulder and the passive elbow; the crank motor is then sent
+    # shoulder - elbow. The rod pivot is passive and always equals the elbow.
+    four_bar: tuple = None
 
 
 FOLLOWERS = {
@@ -64,6 +69,21 @@ FOLLOWERS = {
         origin=(0.0, 0.0, 0.0),
         orientation="full",
     ),
+    # Nova rover's Taipan arm, built from its Onshape URDF by
+    # models/taipan/build_taipan.py. 6 motors, but j3 drives the elbow
+    # through a shoulder-mounted four-bar, so IK works on the elbow and the
+    # crank follows. Reach ~1.17 m from the shoulder vs the leader's 0.40 m.
+    # Stands on its base box (0.163 m below the "base" frame). Origin z puts
+    # the leader's shoulder (0.12 m up) on the Taipan's (0.20 m up).
+    "taipan": FollowerSpec(
+        path=HERE / "models" / "taipan" / "taipan.xml",
+        position=(0.0, 1.8, 0.163),
+        color=(0.85, 0.2, 0.5, 1.0),
+        scale=(2.8, 2.8, 2.8),
+        origin=(0.0, 0.0, 0.201 - 2.8 * 0.12),
+        orientation="full",
+        four_bar=("j2", "l1_l2_pivot", "j3", "l1_p_upper"),
+    ),
     # A SCARA can't tilt its tool, and its vertical travel is only 180 mm
     # against a 550 mm horizontal reach, so horizontal and vertical motion
     # are scaled separately. Horizontal: the leader's 0.40 m max reach x 1.35
@@ -72,7 +92,7 @@ FOLLOWERS = {
     # the SCARA's 0.04-0.22 m stroke.
     "scara": FollowerSpec(
         path=HERE / "models" / "scara" / "scara.xml",
-        position=(0.0, 1.5, 0.0),
+        position=(0.0, 3.0, 0.0),
         color=(0.1, 0.85, 0.95, 1.0),
         scale=(1.35, 1.35, 0.4),
         origin=(0.0, 0.0, 0.03),
@@ -86,7 +106,7 @@ LEADER_BASE_BODY = "leader_base"  # world-aligned frame at the leader's base; po
 LEADER_TOOL_SITE = "leader_tool"
 
 # Where the leader stands: the world origin, between the KUKA (y = -0.6) and
-# the UR5e (y = +0.6), with the SCARA at the end of the row (y = +1.5).
+# the UR5e (y = +0.6), then the Taipan (y = +1.8) and the SCARA at the end (y = +3.0).
 DEFAULT_LEADER_OFFSET = (0.0, 0.0, 0.0)
 
 # The leader's CAD frame is turned 90 degrees about Z relative to the

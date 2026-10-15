@@ -38,23 +38,35 @@ from scene import DEFAULT_LEADER_OFFSET, FOLLOWERS, build_model
 # 50 Hz IK).
 IK_INTERVAL = 10
 
+# The window is redrawn at this rate; physics runs as many steps in between
+# as it takes to keep up with the wall clock. (Syncing and sleeping after
+# every 2 ms step ran well below real time on Windows, whose sleeps are
+# 1-15 ms, so a real leader got ahead of the followers.)
+FRAME_RATE = 60
+# If the computer can't keep up, give up on catching up after this many
+# steps per frame and let the simulation run slower than real time instead.
+MAX_STEPS_PER_FRAME = 100
 
-def make_pose_source(args, follower):
+
+def make_pose_source(args, follower, data):
     if args.demo:
         # Centre the demo on the follower's home tool pose, expressed back in
         # the leader's frame so it goes through the same mapping a real
         # leader does.
         center_pos, center_rot = follower.world_to_leader(*follower.tool_pose())
-        return DemoPose(center_pos, center_rot, size=1.0 / follower.scale)
+        # Simulation time, so the demo slows down with the sim rather than
+        # running ahead of the followers if the computer can't keep up.
+        return DemoPose(center_pos, center_rot, size=1.0 / follower.scale,
+                        clock=lambda: data.time)
     if args.udp is not None:
         logging.info("listening for poses on UDP :%d", args.udp)
         return UdpPoseSource(args.udp)
     return None
 
 
-def make_joint_source(args):
+def make_joint_source(args, data):
     if args.joints_demo:
-        return DemoJoints()
+        return DemoJoints(clock=lambda: data.time)  # simulation time, as for DemoPose
     if args.joints_opcua is not None:
         from opcua_source import OpcUaJointSource  # imported late so asyncua is optional
         logging.info("reading leader joints from %s (%s convention)",
@@ -133,11 +145,49 @@ def main():
                      "ignored" if f.position_only else f.orientation)
 
     leader = LeaderArm(model, data) if with_leader else None
-    joint_source = make_joint_source(args)
-    pose_source = make_pose_source(args, followers[0])
+    joint_source = make_joint_source(args, data)
+    pose_source = make_pose_source(args, followers[0], data)
 
     step_count = 0
     last_report = 0.0
+    behind = 0  # consecutive frames that couldn't keep up
+
+    def step():
+        """One physics step, with the leader pinned and IK every IK_INTERVAL steps."""
+        nonlocal step_count, last_report
+        if leader is not None:
+            joints = joint_source.latest()
+            if joints is not None:
+                leader.set_joints(joints)
+            leader.apply()  # every step: the leader has no motors to hold it
+
+        if step_count % IK_INTERVAL == 0:
+            if leader is not None:
+                # Until the first reading arrives the leader is just
+                # standing at zero; don't send the followers there.
+                pose = leader.pose() if joint_source.latest() is not None else None
+            else:
+                pose = pose_source.latest() if pose_source is not None else None
+
+            report = time.time() - last_report >= 1.0  # measure, don't eyeball
+            for f in followers:
+                if pose is not None:
+                    f.set_target(pose)
+                ik_error, rot_error = f.track()
+                if report:
+                    # Two different numbers: how well IK solved, versus
+                    # how far the arm actually is right now (servos need
+                    # time to catch up, so the second lags while moving).
+                    rot_note = ("" if rot_error is None
+                                else " | orientation: %.2f deg" % np.degrees(rot_error))
+                    logging.info("%s: IK solve error: %.2f mm%s | actual tool gap: %.1f mm",
+                                 f.name, ik_error * 1000, rot_note, f.tool_gap() * 1000)
+            if report:
+                last_report = time.time()
+
+        mujoco.mj_step(model, data)  # advance physics by one timestep
+        step_count += 1
+
     try:
         with mujoco.viewer.launch_passive(model, data) as viewer:
             # Shadows, reflections and haze off by default; still toggleable
@@ -146,45 +196,26 @@ def main():
                 viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
                 viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
                 viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
+            # Wall-clock time at which the simulation was at time 0.
+            start = time.time()
             while viewer.is_running():
-                step_start = time.time()
+                frame_start = time.time()
+                steps = 0
+                while data.time < time.time() - start and steps < MAX_STEPS_PER_FRAME:
+                    step()
+                    steps += 1
+                if steps == MAX_STEPS_PER_FRAME:
+                    # Can't keep up: drop the backlog rather than spiral.
+                    start = time.time() - data.time
+                    behind += 1
+                    if behind == FRAME_RATE:  # a whole second, not a one-off hitch
+                        logging.warning("simulation running slower than real time; "
+                                        "try fewer followers")
+                else:
+                    behind = 0
+                viewer.sync()  # push the new state to the window
 
-                if leader is not None:
-                    joints = joint_source.latest()
-                    if joints is not None:
-                        leader.set_joints(joints)
-                    leader.apply()  # every step: the leader has no motors to hold it
-
-                if step_count % IK_INTERVAL == 0:
-                    if leader is not None:
-                        # Until the first reading arrives the leader is just
-                        # standing at zero; don't send the followers there.
-                        pose = leader.pose() if joint_source.latest() is not None else None
-                    else:
-                        pose = pose_source.latest() if pose_source is not None else None
-
-                    report = time.time() - last_report >= 1.0  # measure, don't eyeball
-                    for f in followers:
-                        if pose is not None:
-                            f.set_target(pose)
-                        ik_error, rot_error = f.track()
-                        if report:
-                            # Two different numbers: how well IK solved, versus
-                            # how far the arm actually is right now (servos need
-                            # time to catch up, so the second lags while moving).
-                            rot_note = ("" if rot_error is None
-                                        else " | orientation: %.2f deg" % np.degrees(rot_error))
-                            logging.info("%s: IK solve error: %.2f mm%s | actual tool gap: %.1f mm",
-                                         f.name, ik_error * 1000, rot_note, f.tool_gap() * 1000)
-                    if report:
-                        last_report = time.time()
-
-                mujoco.mj_step(model, data)  # advance physics by one timestep
-                viewer.sync()                # push the new state to the window
-                step_count += 1
-
-                # Sleep off whatever's left of the timestep so it runs in real time.
-                remaining = model.opt.timestep - (time.time() - step_start)
+                remaining = 1.0 / FRAME_RATE - (time.time() - frame_start)
                 if remaining > 0:
                     time.sleep(remaining)
     finally:

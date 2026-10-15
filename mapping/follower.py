@@ -113,11 +113,24 @@ class Follower:
         self._servo_kp = model.actuator_gainprm[self._acts, 0].copy()
 
         # Put the robot in its "home" pose. Its keyframe covers the whole
-        # scene, so only this robot's joints and servo targets are copied.
+        # scene, so only this robot's joints and servo targets are copied --
+        # all of its joints, including unactuated ones (a four-bar's passive
+        # pivots), so a closed loop starts closed.
         key = model.key(prefix + "home").id
-        data.qpos[self._qpos_adr] = model.key_qpos[key, self._qpos_adr]
+        own = model.jnt_qposadr[[j for j in range(model.njnt)
+                                 if model.joint(j).name.startswith(prefix)]]
+        data.qpos[own] = model.key_qpos[key, own]
         data.ctrl[self._acts] = model.key_ctrl[key, self._acts]
         mujoco.mj_forward(model, data)
+
+        self._four_bar = None
+        if spec.four_bar is not None:
+            shoulder, elbow, crank, rod = (model.joint(prefix + n) for n in spec.four_bar)
+            acts = list(model.actuator_trnid[self._acts, 0])
+            self._four_bar = dict(
+                shoulder_act=acts.index(shoulder.id), crank_act=acts.index(crank.id),
+                shoulder=shoulder.qposadr[0], elbow=elbow.qposadr[0],
+                passive_dofs=[elbow.dofadr[0], rod.dofadr[0]])
 
         self.base_pos = data.xpos[model.body(prefix + "base").id].copy()
 
@@ -211,8 +224,21 @@ class Follower:
         # (measured as a 14mm droop on the KUKA in the original project).
         # Adding the force gravity needs (qfrc_bias) up front means the servo
         # no longer has to drift to generate it.
-        self.data.ctrl[self._acts] = (q[self._qpos_adr]
-                                      + self.data.qfrc_bias[self._dof_adr] / self._servo_kp)
+        targets = q[self._qpos_adr]
+        torques = self.data.qfrc_bias[self._dof_adr].copy()
+        if self._four_bar is not None:
+            fb = self._four_bar
+            # IK left the crank where it was (it doesn't move the tool); send
+            # it where the solved elbow needs it.
+            targets[fb["crank_act"]] = q[fb["shoulder"]] - q[fb["elbow"]]
+            # The passive pivots have no motor: their load is carried by the
+            # two shoulder motors through the linkage. elbow = shoulder - crank
+            # (and rod = elbow), so by virtual work it adds to the shoulder's
+            # torque and subtracts from the crank's.
+            passive = self.data.qfrc_bias[fb["passive_dofs"]].sum()
+            torques[fb["shoulder_act"]] += passive
+            torques[fb["crank_act"]] -= passive
+        self.data.ctrl[self._acts] = targets + torques / self._servo_kp
         return pos_err, rot_err
 
     def _yaw_at(self, q):
