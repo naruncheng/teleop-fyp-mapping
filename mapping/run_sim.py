@@ -140,6 +140,12 @@ def main():
     last_report = 0.0
     try:
         with mujoco.viewer.launch_passive(model, data) as viewer:
+            # Shadows, reflections and haze off by default; still toggleable
+            # in the viewer's Rendering panel.
+            with viewer.lock():
+                viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_SHADOW] = 0
+                viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_REFLECTION] = 0
+                viewer.user_scn.flags[mujoco.mjtRndFlag.mjRND_HAZE] = 0
             while viewer.is_running():
                 step_start = time.time()
 

@@ -46,8 +46,20 @@ FOLLOWERS = {
     # every IK solve within 10 mm / 5 deg.
     "kuka": FollowerSpec(
         path=HERE / "models" / "kuka_iiwa_14" / "iiwa14.xml",
-        position=(0.0, 0.0, 0.0),
+        position=(0.0, -0.6, 0.0),
         color=(1.0, 0.85, 0.0, 1.0),
+        scale=(2.0, 2.0, 2.0),
+        origin=(0.0, 0.0, 0.0),
+        orientation="full",
+    ),
+    # MuJoCo Menagerie UR5e, unchanged. 6 DOF, so full pose but no spare
+    # joint. 850 mm reach vs the leader's 400 mm: 2x fits, and 1.6-2.0 all
+    # measured the same on --joints-demo (every solve within 10 mm / 5 deg
+    # once past the startup swing from its home pose).
+    "ur5e": FollowerSpec(
+        path=HERE / "models" / "universal_robots_ur5e" / "ur5e.xml",
+        position=(0.0, 0.6, 0.0),
+        color=(1.0, 0.45, 0.1, 1.0),
         scale=(2.0, 2.0, 2.0),
         origin=(0.0, 0.0, 0.0),
         orientation="full",
@@ -60,24 +72,12 @@ FOLLOWERS = {
     # the SCARA's 0.04-0.22 m stroke.
     "scara": FollowerSpec(
         path=HERE / "models" / "scara" / "scara.xml",
-        position=(0.0, 1.4, 0.0),
+        position=(0.0, 1.5, 0.0),
         color=(0.1, 0.85, 0.95, 1.0),
         scale=(1.35, 1.35, 0.4),
         origin=(0.0, 0.0, 0.03),
         orientation="yaw",
         yaw_joint="joint4",
-    ),
-    # MuJoCo Menagerie UR5e, unchanged. 6 DOF, so full pose but no spare
-    # joint. 850 mm reach vs the leader's 400 mm: 2x fits, and 1.6-2.0 all
-    # measured the same on --joints-demo (every solve within 10 mm / 5 deg
-    # once past the startup swing from its home pose).
-    "ur5e": FollowerSpec(
-        path=HERE / "models" / "universal_robots_ur5e" / "ur5e.xml",
-        position=(0.0, 2.9, 0.0),
-        color=(1.0, 0.45, 0.1, 1.0),
-        scale=(2.0, 2.0, 2.0),
-        origin=(0.0, 0.0, 0.0),
-        orientation="full",
     ),
 }
 
@@ -85,8 +85,9 @@ LEADER_PREFIX = "leader_"
 LEADER_BASE_BODY = "leader_base"  # world-aligned frame at the leader's base; poses are relative to this
 LEADER_TOOL_SITE = "leader_tool"
 
-# Where the leader stands, beside the KUKA (which sits at the world origin).
-DEFAULT_LEADER_OFFSET = (0.0, -1.0, 0.0)
+# Where the leader stands: the world origin, between the KUKA (y = -0.6) and
+# the UR5e (y = +0.6), with the SCARA at the end of the row (y = +1.5).
+DEFAULT_LEADER_OFFSET = (0.0, 0.0, 0.0)
 
 # The leader's CAD frame is turned 90 degrees about Z relative to the
 # KUKA's: its pitch joints (2, 4, 6) rotate about its X axis, the KUKA's

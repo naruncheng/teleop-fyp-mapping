@@ -56,7 +56,7 @@ a second the console logs each follower's IK solve error and actual tool-to-targ
 The defaults are tuned for the mini-arm leader. For another leader (e.g. `--udp`), set the
 scale for it, e.g. `--kuka-scale 1` for life size.
 
-Where things are drawn (KUKA at the origin, SCARA at y = +1.4 m, UR5e at y = +2.9 m, leader at y = -1 m) has no
+Where things are drawn (leader at the origin, KUKA at y = -0.6 m, UR5e at y = +0.6 m, SCARA at y = +1.5 m) has no
 effect on the mapping: each origin is relative to its own robot's base.
 
 ## Feeding in the physical leader
